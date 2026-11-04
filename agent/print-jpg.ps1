@@ -1,91 +1,96 @@
+[CmdletBinding()]
 param(
-    [Parameter(Mandatory=$true)][string]$ImagePath,
-    [Parameter(Mandatory=$true)][string]$PrinterName,
-    [ValidateRange(1,99)][int]$Copies = 1,
-    [ValidateSet('A4','A5','A3','LETTER','LEGAL','B5')][string]$PaperSize = 'A4',
-    [ValidateSet('color','bw')][string]$ColorMode = 'color'
+    [Parameter(Mandatory = $true)]
+    [ValidateNotNullOrEmpty()]
+    [string]$ImagePath,
+
+    [Parameter(Mandatory = $true)]
+    [ValidateNotNullOrEmpty()]
+    [string]$PrinterName,
+
+    [ValidateRange(1, 5)]
+    [int]$Copies = 1,
+
+    [ValidateSet('A4', 'A5', 'A3', 'LETTER', 'LEGAL', 'B5')]
+    [string]$PaperSize = 'A4',
+
+    [ValidateSet('color', 'bw')]
+    [string]$ColorMode = 'color'
 )
 
 $ErrorActionPreference = 'Stop'
+
 $image = $null
 $document = $null
+$printPageHandler = $null
 
 try {
     if (-not (Test-Path -LiteralPath $ImagePath -PathType Leaf)) {
-        throw "The uploaded JPG temporary file was not found."
+        throw "The JPG temporary file was not found: $ImagePath"
+    }
+
+    $resolvedImagePath = (Resolve-Path -LiteralPath $ImagePath).Path
+    $extension = [System.IO.Path]::GetExtension($resolvedImagePath).ToLowerInvariant()
+    if ($extension -notin @('.jpg', '.jpeg')) {
+        throw "Only JPG/JPEG images are supported. Received: $extension"
     }
 
     Add-Type -AssemblyName System.Drawing
-    $image = [System.Drawing.Image]::FromFile($ImagePath)
+
+    $image = [System.Drawing.Image]::FromFile($resolvedImagePath)
 
     $document = New-Object System.Drawing.Printing.PrintDocument
     $document.PrinterSettings.PrinterName = $PrinterName
+    $document.PrinterSettings.Copies = [int16]$Copies
 
     if (-not $document.PrinterSettings.IsValid) {
-        throw "Windows cannot find or use printer queue '$PrinterName'."
+        throw "Windows cannot find or use printer queue '$PrinterName'. Check the exact queue name and make sure the printer is installed."
     }
 
-    # Match the selected standard paper size against the sizes exposed by the Brother driver.
-    $paperKindName = switch ($PaperSize) {
-        'LETTER' { 'Letter' }
-        'LEGAL'  { 'Legal' }
-        default  { $PaperSize }
+    # Map the website's paper-size labels to the Windows PaperKind enum.
+    $paperKindName = switch ($PaperSize.ToUpperInvariant()) {
+        'LETTER' { 'Letter'; break }
+        'LEGAL'  { 'Legal'; break }
+        default  { $PaperSize; break }
     }
-    $paperKind = [System.Enum]::Parse([System.Drawing.Printing.PaperKind], $paperKindName, $true)
+
+    try {
+        $paperKind = [System.Enum]::Parse(
+            [System.Drawing.Printing.PaperKind],
+            $paperKindName,
+            $true
+        )
+    }
+    catch {
+        throw "Windows does not recognize paper size '$PaperSize'."
+    }
+
     $matchingPaper = $null
-
     foreach ($availablePaper in $document.PrinterSettings.PaperSizes) {
-        if ($availablePaper.Kind -eq $paperKind) {
+        if (
+            $availablePaper.Kind -eq $paperKind -or
+            $availablePaper.PaperName -eq $paperKindName
+        ) {
             $matchingPaper = $availablePaper
             break
         }
     }
 
     if ($null -eq $matchingPaper) {
-        $availableNames = @($document.PrinterSettings.PaperSizes | ForEach-Object { $_.PaperName }) -join ', '
-        throw "The Brother driver does not report paper size '$PaperSize'. Available sizes: $availableNames"
+        $availableNames = @(
+            $document.PrinterSettings.PaperSizes |
+                ForEach-Object { $_.PaperName }
+        ) -join ', '
+
+        throw "The printer driver does not offer '$PaperSize'. Available sizes: $availableNames"
     }
 
-    $document.PrinterSettings.Copies = [int16]$Copies
     $document.DefaultPageSettings.PaperSize = $matchingPaper
     $document.DefaultPageSettings.Color = ($ColorMode -eq 'color')
     $document.DefaultPageSettings.Landscape = ($image.Width -gt $image.Height)
-    $document.DocumentName = [System.IO.Path]::GetFileName($ImagePath)
     $document.OriginAtMargins = $false
+    $document.DocumentName = [System.IO.Path]::GetFileName($resolvedImagePath)
 
+    # Capture the image in the event-handler scope so it remains available
+    # when Windows raises the PrintPage event.
     $imageForPage = $image
-    $handler = [System.Drawing.Printing.PrintPageEventHandler]{
-        param($sender, $eventArgs)
-
-        $bounds = $eventArgs.MarginBounds
-        if ($bounds.Width -le 0 -or $bounds.Height -le 0) {
-            $bounds = $eventArgs.PageBounds
-        }
-
-        $scaleX = $bounds.Width / [double]$imageForPage.Width
-        $scaleY = $bounds.Height / [double]$imageForPage.Height
-        $scale = [Math]::Min($scaleX, $scaleY)
-
-        $drawWidth = [int][Math]::Round($imageForPage.Width * $scale)
-        $drawHeight = [int][Math]::Round($imageForPage.Height * $scale)
-        $left = $bounds.Left + [int](($bounds.Width - $drawWidth) / 2)
-        $top = $bounds.Top + [int](($bounds.Height - $drawHeight) / 2)
-
-        $destination = New-Object System.Drawing.Rectangle($left, $top, $drawWidth, $drawHeight)
-        $eventArgs.Graphics.DrawImage($imageForPage, $destination)
-        $eventArgs.HasMorePages = $false
-    }
-
-    $document.add_PrintPage($handler)
-    $document.Print()
-    Write-Output "JPG submitted to '$PrinterName' using $PaperSize and $ColorMode."
-    exit 0
-}
-catch {
-    [Console]::Error.WriteLine($_.Exception.Message)
-    exit 1
-}
-finally {
-    if ($document -ne $null) { $document.Dispose() }
-    if ($image -ne $null) { $image.Dispose() }
-}
