@@ -104,7 +104,8 @@ async function refreshSession(){
  profile=data;
  $('accountText').textContent=data.suspended?'Account access is suspended. Contact an administrator.':'Email verified. Your account can submit print requests; each request must be approved by an administrator before printing.';
  $('accountName').textContent=user.email+' · '+data.role;
- // Account approval is not required for submitting jobs. Only suspended accounts are blocked.\n  $('printPanel').hidden=!!data.suspended;
+ // Account approval is not required for submitting jobs. Only suspended accounts are blocked.
+  $('printPanel').hidden = !!data.suspended;
  $('adminPanel').hidden=data.role!=='admin'||data.suspended;
  await loadJobs();
  if(!$('adminPanel').hidden) await loadAdmin();
