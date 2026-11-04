@@ -65,7 +65,10 @@ while ($true) {
 
         $file = Join-Path $temp ("job-" + $job.id + $ext)
 
-        Invoke-WebRequest -Uri $job.download_url -OutFile $file
+        Invoke-WebRequest `
+            -UseBasicParsing `
+            -Uri $job.download_url `
+            -OutFile $file
 
         if (-not (Test-Path -LiteralPath $file) -or
             (Get-Item -LiteralPath $file).Length -lt 1) {
@@ -73,6 +76,7 @@ while ($true) {
         }
 
         if ($ext -eq '.pdf') {
+
             if (-not (Test-Path -LiteralPath $config.sumatraPath)) {
                 throw "SumatraPDF not found: $($config.sumatraPath)"
             }
@@ -89,13 +93,32 @@ while ($true) {
                 $settings += ",$($job.page_start)-$($job.page_end)"
             }
 
-            & $config.sumatraPath -silent -print-to $config.printerName -print-settings $settings $file
+            # Build quoted arguments for SumatraPDF.
+            $sumatraArguments = @(
+                '-silent'
+                '-print-to'
+                ('"{0}"' -f $config.printerName)
+                '-print-settings'
+                ('"{0}"' -f $settings)
+                ('"{0}"' -f $file)
+            )
 
-            if ($LASTEXITCODE -ne 0) {
-                throw "SumatraPDF exited with code $LASTEXITCODE."
+            # Wait for SumatraPDF and retrieve its actual exit code.
+            $sumatraProcess = Start-Process `
+                -FilePath $config.sumatraPath `
+                -ArgumentList ($sumatraArguments -join ' ') `
+                -Wait `
+                -PassThru `
+                -NoNewWindow
+
+            if ($sumatraProcess.ExitCode -ne 0) {
+                throw "SumatraPDF exited with code $($sumatraProcess.ExitCode)."
             }
+
+            Write-Host "SumatraPDF finished successfully."
         }
         else {
+
             if ($null -ne $job.page_start -or $null -ne $job.page_end) {
                 throw "Page ranges are only supported for PDF files."
             }
@@ -112,12 +135,16 @@ while ($true) {
                 -Copies ([int]$job.copies) `
                 -PaperSize $job.paper_size `
                 -ColorMode $job.color_mode
+
+            if (-not $?) {
+                throw "JPG print helper reported an unsuccessful execution."
+            }
         }
 
         $resultBody = @{
             id = $job.id
             status = 'completed'
-            message = 'Submitted to the Windows print queue. Check the printer for physical output.'
+            message = 'Print command submitted successfully. Check the printer for physical output.'
         } | ConvertTo-Json
 
         Invoke-RestMethod `
