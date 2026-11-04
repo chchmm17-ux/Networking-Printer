@@ -3,6 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <title>Remote Brother Printer</title>
 <style>
 :root{color-scheme:light dark;--bg:#f4f6fa;--surface:#fff;--ink:#182235;--muted:#64748b;--line:#dbe2ec;--primary:#315bd6;--ok:#16834a;--warn:#a96500;--err:#b42318}
@@ -48,7 +51,7 @@ table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:.55rem;b
 <h2>Submit a print request</h2>
 <form id="printForm">
 <div class="row">
-<div class="field"><label for="file">PDF or JPG (maximum 25 MB)</label><input id="file" type="file" accept="application/pdf,image/jpeg" required></div>
+<div class="field"><label for="file">PDF or JPG (maximum 25 MB)</label><input id="file" type="file" accept=".pdf,.jpg,.jpeg,application/pdf,image/jpeg" required></div>
 <div class="field"><label for="paper">Paper size</label><select id="paper"><option>A4</option><option>LETTER</option><option>LEGAL</option><option>A5</option><option>A3</option><option>B5</option></select></div>
 </div>
 <div class="row">
@@ -70,7 +73,7 @@ table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:.55rem;b
 <div style="overflow:auto"><table><thead><tr><th>Submitted</th><th>File</th><th>Copies</th><th>Paper</th><th>Color</th><th>Pages</th><th>Status</th></tr></thead><tbody id="jobs"><tr><td colspan="7">Sign in to view your requests.</td></tr></tbody></table></div>
 </section>
 <section class="wide" id="adminPanel" hidden>
-<div class="row"><div><h2>Administrator dashboard</h2><p class="hint">Manage account access and review print requests. Only verified administrator accounts can use these controls.</p></div><div style="text-align:right"><button class="secondary" id="adminRefresh">Refresh dashboard</button></div></div>
+<div class="row"><div><h2>Administrator dashboard</h2><p class="hint">Review and approve or reject print requests. Only administrator accounts can use these controls.</p></div><div style="text-align:right"><button class="secondary" id="adminRefresh">Refresh dashboard</button></div></div>
 <p class="msg" id="adminMsg" role="status"></p>
 <h3>Print request approvals and history</h3>
 <div style="overflow:auto"><table><thead><tr><th>Submitted</th><th>User</th><th>File</th><th>Options</th><th>Status</th><th>Preview</th><th>Action</th></tr></thead><tbody id="adminJobs"><tr><td colspan="7">Load dashboard to view requests.</td></tr></tbody></table></div>
@@ -99,9 +102,9 @@ async function refreshSession(){
  const {data,error}=await sb.from('profiles').select('display_name,role,approved,suspended').eq('id',user.id).single();
  if(error){message('authMsg','Signed in, but profile status could not be loaded: '+error.message,'err');return;}
  profile=data;
- $('accountText').textContent=data.suspended?'Account access is suspended. Contact an administrator.':'Email verified — you may submit print requests. Each print request requires administrator approval.';
+ $('accountText').textContent=data.suspended?'Account access is suspended. Contact an administrator.':'Email verified. Your account can submit print requests; each request must be approved by an administrator before printing.';
  $('accountName').textContent=user.email+' · '+data.role;
- $('printPanel').hidden=!!data.suspended;
+ // Account approval is not required for submitting jobs. Only suspended accounts are blocked.\n  $('printPanel').hidden=!!data.suspended;
  $('adminPanel').hidden=data.role!=='admin'||data.suspended;
  await loadJobs();
  if(!$('adminPanel').hidden) await loadAdmin();
@@ -142,7 +145,7 @@ $('adminPanel').addEventListener('click',async e=>{
  const button=e.target.closest('button[data-action]');
  if(!button)return;
  const action=button.dataset.action,id=button.dataset.id;
- const labels={approve_account:'Approve this account?',suspend_account:'Suspend this account?',approve_job:'Approve this print request?',reject_job:'Reject this print request?'};
+ const labels={approve_job:'Approve this print request?',reject_job:'Reject this print request?'};
  if(!confirm(labels[action]||'Continue?'))return;
  button.disabled=true;
  try{const result=await adminRequest({action,id});message('adminMsg',result.message,'ok');await loadAdmin();await refreshSession();}
