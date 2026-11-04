@@ -27,7 +27,7 @@ table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:.55rem;b
 <body>
 <header>
 <h1>Remote Brother Printer</h1>
-<p>Submit a PDF or JPG from any internet connection. Print requests require account approval and administrator approval.</p>
+<p>Submit a PDF or JPG from any internet connection. Print requests require administrator approval before printing.</p>
 </header>
 <main>
 <section id="authPanel">
@@ -37,7 +37,7 @@ table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:.55rem;b
 <div class="row"><button id="signIn">Sign in</button><button class="secondary" id="signUp">Create account</button></div>
 <p class="msg" id="authMsg" role="status"></p>
 <button class="secondary" id="signOut" hidden>Sign out</button>
-<p class="hint">New accounts must verify their email and wait for administrator approval.</p>
+<p class="hint">New accounts must verify their email before signing in. No account approval is required.</p>
 </section>
 <section id="accountPanel">
 <h2>Account status</h2>
@@ -72,9 +72,7 @@ table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:.55rem;b
 <section class="wide" id="adminPanel" hidden>
 <div class="row"><div><h2>Administrator dashboard</h2><p class="hint">Manage account access and review print requests. Only verified administrator accounts can use these controls.</p></div><div style="text-align:right"><button class="secondary" id="adminRefresh">Refresh dashboard</button></div></div>
 <p class="msg" id="adminMsg" role="status"></p>
-<h3>Account approvals</h3>
-<div style="overflow:auto"><table><thead><tr><th>Email</th><th>Registered</th><th>Status</th><th>Action</th></tr></thead><tbody id="adminAccounts"><tr><td colspan="4">Load dashboard to view accounts.</td></tr></tbody></table></div>
-<h3 style="margin-top:1.5rem">Print request approvals and history</h3>
+<h3>Print request approvals and history</h3>
 <div style="overflow:auto"><table><thead><tr><th>Submitted</th><th>User</th><th>File</th><th>Options</th><th>Status</th><th>Preview</th><th>Action</th></tr></thead><tbody id="adminJobs"><tr><td colspan="7">Load dashboard to view requests.</td></tr></tbody></table></div>
 </section>
 </main>
@@ -101,10 +99,10 @@ async function refreshSession(){
  const {data,error}=await sb.from('profiles').select('display_name,role,approved,suspended').eq('id',user.id).single();
  if(error){message('authMsg','Signed in, but profile status could not be loaded: '+error.message,'err');return;}
  profile=data;
- $('accountText').textContent=data.suspended?'Account access is suspended. Contact an administrator.':data.approved?'Account approved — you may submit print requests.':'Email verified/account created. Waiting for administrator approval.';
+ $('accountText').textContent=data.suspended?'Account access is suspended. Contact an administrator.':'Email verified — you may submit print requests. Each print request requires administrator approval.';
  $('accountName').textContent=user.email+' · '+data.role;
- $('printPanel').hidden=!data.approved||data.suspended;
- $('adminPanel').hidden=data.role!=='admin'||!data.approved||data.suspended;
+ $('printPanel').hidden=!!data.suspended;
+ $('adminPanel').hidden=data.role!=='admin'||data.suspended;
  await loadJobs();
  if(!$('adminPanel').hidden) await loadAdmin();
 }
@@ -126,18 +124,9 @@ async function adminRequest(payload){
 }
 async function loadAdmin(){
  if(profile?.role!=='admin')return;
- $('adminAccounts').innerHTML='<tr><td colspan="4">Loading…</td></tr>';
  $('adminJobs').innerHTML='<tr><td colspan="7">Loading…</td></tr>';
  try{
   const data=await adminRequest();
-  const accounts=data.profiles||[];
-  $('adminAccounts').innerHTML=accounts.length?accounts.map(p=>{
-   const status=p.suspended?'Suspended':p.approved?'Approved':'Pending approval';
-   let action='';
-   if(p.role!=='admin'&&!p.approved&&!p.suspended) action=`<button data-action="approve_account" data-id="${esc(p.id)}">Approve</button>`;
-   else if(p.role!=='admin'&&p.approved&&!p.suspended) action=`<button class="danger" data-action="suspend_account" data-id="${esc(p.id)}">Suspend</button>`;
-   return `<tr><td>${esc(p.email||'(email unavailable)')}</td><td>${esc(new Date(p.created_at).toLocaleString())}</td><td>${status}${p.role==='admin'?' · Admin':''}</td><td>${action||'—'}</td></tr>`;
-  }).join(''):'<tr><td colspan="4">No accounts found.</td></tr>';
   $('adminJobs').innerHTML=(data.jobs||[]).length?data.jobs.map(j=>{
    const pages=j.page_start?`${j.page_start}–${j.page_end}`:'All pages';
    const preview=j.preview_url?`<a href="${esc(j.preview_url)}" target="_blank" rel="noopener">Open file</a>`:'Unavailable';
@@ -145,8 +134,8 @@ async function loadAdmin(){
    if(j.status==='queued') action=`<div class="actions"><button data-action="approve_job" data-id="${esc(j.id)}">Approve</button><button class="danger" data-action="reject_job" data-id="${esc(j.id)}">Reject</button></div>`;
    return `<tr><td>${esc(new Date(j.created_at).toLocaleString())}</td><td>${esc(j.user_email||j.user_id)}</td><td>${esc(j.file_name)}</td><td>${j.copies} × ${esc(j.paper_size)} · ${j.color_mode==='bw'?'B&W':'Color'} · ${pages}</td><td>${esc(j.status)}${j.message?' — '+esc(j.message):''}</td><td>${preview}</td><td>${action}</td></tr>`;
   }).join(''):'<tr><td colspan="7">No print requests found.</td></tr>';
-  message('adminMsg',`Dashboard updated. ${accounts.length} accounts and ${(data.jobs||[]).length} print requests loaded.`,'ok');
- }catch(err){message('adminMsg',err.message,'err');$('adminAccounts').innerHTML='<tr><td colspan="4">Could not load accounts.</td></tr>';$('adminJobs').innerHTML='<tr><td colspan="7">Could not load requests.</td></tr>';}
+  message('adminMsg',`Dashboard updated. ${(data.jobs||[]).length} print requests loaded.`,'ok');
+ }catch(err){message('adminMsg',err.message,'err');$('adminJobs').innerHTML='<tr><td colspan="7">Could not load requests.</td></tr>';}
 }
 $('adminRefresh').onclick=loadAdmin;
 $('adminPanel').addEventListener('click',async e=>{
@@ -160,7 +149,7 @@ $('adminPanel').addEventListener('click',async e=>{
  catch(err){message('adminMsg',err.message,'err');button.disabled=false;}
 });
 $('printForm').onsubmit=async e=>{
- e.preventDefault();if(!sb||!user||!profile?.approved||profile?.suspended)return;
+ e.preventDefault();if(!sb||!user||profile?.suspended)return;
  const file=$('file').files[0],copies=Number($('copies').value),start=$('pageStart').value?Number($('pageStart').value):null,end=$('pageEnd').value?Number($('pageEnd').value):null;
  if(!file){message('printMsg','Choose a PDF or JPG file.','err');return;}
  if(file.size<1||file.size>25*1024*1024){message('printMsg','File must be between 1 byte and 25 MB.','err');return;}
