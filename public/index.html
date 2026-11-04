@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Remote Brother Printer</title>
+<style>
+:root{color-scheme:light dark;--bg:#f4f6fa;--surface:#fff;--ink:#182235;--muted:#64748b;--line:#dbe2ec;--primary:#315bd6;--ok:#16834a;--warn:#a96500;--err:#b42318}
+@media(prefers-color-scheme:dark){:root{--bg:#0c1320;--surface:#142033;--ink:#eef2f8;--muted:#a9b6cb;--line:#2b3b55;--primary:#7aa2ff;--ok:#5fd39b;--warn:#f0b35a;--err:#ff8a80}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.55 system-ui,sans-serif}
+header,main{max-width:1100px;margin:auto;padding:1.25rem}header h1{margin:.2rem 0}header p,.hint{color:var(--muted)}
+main{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1rem}section{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:1rem;min-width:0}.wide{grid-column:1/-1}
+h2{font-size:1.2rem;margin:.1rem 0 1rem}.field{margin:.8rem 0}label{display:block;font-weight:650;margin-bottom:.3rem}
+input,select{width:100%;min-height:2.8rem;padding:.55rem .7rem;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink)}
+button{min-height:2.8rem;padding:.55rem 1rem;border:0;border-radius:8px;background:var(--primary);color:white;font-weight:700;cursor:pointer}button.secondary{background:transparent;color:var(--primary);border:1px solid var(--primary)}button:disabled{opacity:.55;cursor:not-allowed}
+.row{display:flex;gap:.6rem;align-items:center;flex-wrap:wrap}.row>*{flex:1}.msg{margin:.7rem 0;min-height:1.4rem}.ok{color:var(--ok)}.warn{color:var(--warn)}.err{color:var(--err)}
+table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:.55rem;border-bottom:1px solid var(--line);overflow-wrap:anywhere}th{color:var(--muted)}
+.progress{height:8px;background:var(--line);border-radius:99px;overflow:hidden}.progress div{height:100%;background:var(--primary);width:0}
+[hidden]{display:none!important}
+@media(max-width:760px){main{grid-template-columns:1fr}.wide{grid-column:auto}}
+</style>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+<header>
+<h1>Remote Brother Printer</h1>
+<p>Submit a PDF or JPG from any internet connection. Print requests require account approval and administrator approval.</p>
+</header>
+<main>
+<section id="authPanel">
+<h2>Account</h2>
+<div class="field"><label for="email">Email</label><input id="email" type="email" autocomplete="email"></div>
+<div class="field"><label for="password">Password</label><input id="password" type="password" autocomplete="current-password"></div>
+<div class="row"><button id="signIn">Sign in</button><button class="secondary" id="signUp">Create account</button></div>
+<p class="msg" id="authMsg" role="status"></p>
+<button class="secondary" id="signOut" hidden>Sign out</button>
+<p class="hint">New accounts must verify their email and wait for administrator approval.</p>
+</section>
+<section id="accountPanel">
+<h2>Account status</h2>
+<p id="accountText" class="hint">Sign in to check your account.</p>
+<p id="accountName"></p>
+</section>
+<section id="printPanel" class="wide" hidden>
+<h2>Submit a print request</h2>
+<form id="printForm">
+<div class="row">
+<div class="field"><label for="file">PDF or JPG (maximum 25 MB)</label><input id="file" type="file" accept="application/pdf,image/jpeg" required></div>
+<div class="field"><label for="paper">Paper size</label><select id="paper"><option>A4</option><option>LETTER</option><option>LEGAL</option><option>A5</option><option>A3</option><option>B5</option></select></div>
+</div>
+<div class="row">
+<div class="field"><label for="color">Print color</label><select id="color"><option value="color">Colored</option><option value="bw">Black &amp; White</option></select></div>
+<div class="field"><label for="copies">Copies (1–5)</label><input id="copies" type="number" min="1" max="5" value="1"></div>
+</div>
+<div class="row">
+<div class="field"><label for="pageStart">First page (optional)</label><input id="pageStart" type="number" min="1" placeholder="All pages"></div>
+<div class="field"><label for="pageEnd">Last page (optional)</label><input id="pageEnd" type="number" min="1" placeholder="All pages"></div>
+</div>
+<p class="hint">If you enter a page range, both page numbers are required and the selected range cannot exceed 100 pages. The Windows agent will apply the range to PDFs.</p>
+<button id="submitJob" type="submit">Send for admin approval</button>
+<div class="progress" style="margin-top:.8rem"><div id="progressFill"></div></div>
+<p class="msg" id="printMsg" role="status"></p>
+</form>
+</section>
+<section class="wide">
+<h2>My recent print requests</h2>
+<div style="overflow:auto"><table><thead><tr><th>Submitted</th><th>File</th><th>Copies</th><th>Paper</th><th>Color</th><th>Pages</th><th>Status</th></tr></thead><tbody id="jobs"><tr><td colspan="7">Sign in to view your requests.</td></tr></tbody></table></div>
+</section>
+</main>
+<script>
+'use strict';
+const $=id=>document.getElementById(id);
+const SUPABASE_URL=window.ENV_SUPABASE_URL||'';
+const SUPABASE_PUBLISHABLE_KEY=window.ENV_SUPABASE_PUBLISHABLE_KEY||'';
+let sb=null,user=null,profile=null;
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function message(id,text,kind=''){ $(id).className='msg '+kind;$(id).textContent=text; }
+function setup(){
+ if(!SUPABASE_URL||!SUPABASE_PUBLISHABLE_KEY){message('authMsg','Setup required: add your Supabase URL and publishable key to public/config.js.','warn');return;}
+ sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_PUBLISHABLE_KEY);
+ sb.auth.onAuthStateChange(()=>refreshSession());
+ refreshSession();
+}
+async function refreshSession(){
+ if(!sb)return;
+ const {data:{session}}=await sb.auth.getSession();user=session?.user||null;
+ $('signOut').hidden=!user;$('signIn').disabled=!!user;$('signUp').disabled=!!user;
+ if(!user){profile=null;$('accountText').textContent='You are signed out.';$('printPanel').hidden=true;$('jobs').innerHTML='<tr><td colspan="7">Sign in to view your requests.</td></tr>';return;}
+ const {data,error}=await sb.from('profiles').select('display_name,role,approved').eq('id',user.id).single();
+ if(error){message('authMsg','Signed in, but profile status could not be loaded: '+error.message,'err');return;}
+ profile=data;
+ $('accountText').textContent=data.approved?'Account approved — you may submit print requests.':'Email verified/account created. Waiting for administrator approval.';
+ $('accountName').textContent=user.email+' · '+data.role;
+ $('printPanel').hidden=!data.approved;
+ await loadJobs();
+}
+$('signIn').onclick=async()=>{if(!sb)return;const {error}=await sb.auth.signInWithPassword({email:$('email').value.trim(),password:$('password').value});message('authMsg',error?.message||'Signed in.',''+(error?'err':'ok'));if(!error)await refreshSession();};
+$('signUp').onclick=async()=>{if(!sb)return;const {data,error}=await sb.auth.signUp({email:$('email').value.trim(),password:$('password').value,options:{emailRedirectTo:location.origin}});message('authMsg',error?.message||'Account created. Check your email to confirm your address.',''+(error?'err':'ok'));};
+$('signOut').onclick=async()=>{await sb.auth.signOut();await refreshSession();};
+async function loadJobs(){
+ if(!user)return;
+ const {data,error}=await sb.from('print_jobs').select('id,file_name,copies,paper_size,color_mode,page_start,page_end,status,created_at,message').eq('user_id',user.id).order('created_at',{ascending:false}).limit(20);
+ if(error){$('jobs').innerHTML='<tr><td colspan="7">Could not load requests.</td></tr>';return;}
+ $('jobs').innerHTML=data.length?data.map(j=>`<tr><td>${esc(new Date(j.created_at).toLocaleString())}</td><td>${esc(j.file_name)}</td><td>${j.copies}</td><td>${esc(j.paper_size)}</td><td>${j.color_mode==='bw'?'B&W':'Color'}</td><td>${j.page_start?`${j.page_start}–${j.page_end}`:'All'}</td><td>${esc(j.status)}${j.message?' — '+esc(j.message):''}</td></tr>`).join(''):'<tr><td colspan="7">No requests yet.</td></tr>';
+}
+$('printForm').onsubmit=async e=>{
+ e.preventDefault();if(!sb||!user||!profile?.approved)return;
+ const file=$('file').files[0],copies=Number($('copies').value),start=$('pageStart').value?Number($('pageStart').value):null,end=$('pageEnd').value?Number($('pageEnd').value):null;
+ if(!file){message('printMsg','Choose a PDF or JPG file.','err');return;}
+ if(file.size<1||file.size>25*1024*1024){message('printMsg','File must be between 1 byte and 25 MB.','err');return;}
+ const ext=file.type==='application/pdf'?'pdf':file.type==='image/jpeg'?'jpg':'';
+ if(!ext){message('printMsg','Only PDF and JPG files are accepted.','err');return;}
+ if(!Number.isInteger(copies)||copies<1||copies>5){message('printMsg','Copies must be from 1 to 5.','err');return;}
+ if(ext==='jpg'&&start!==null){message('printMsg','Page ranges are available for PDF files only.','err');return;}
+ if((start===null)!==(end===null)|| (start!==null&&(!Number.isInteger(start)||!Number.isInteger(end)||start<1||end<start||end-start>=100))){message('printMsg','Enter both page numbers. The range may contain up to 100 pages.','err');return;}
+ $('submitJob').disabled=true;$('progressFill').style.width='15%';message('printMsg','Uploading privately to Supabase…','warn');
+ try{
+  const safeName=file.name.replace(/[^\w.\-() ]/g,'_').slice(-150)||`document.${ext}`;
+  const path=`${user.id}/${crypto.randomUUID()}.${ext}`;
+  const {error:uploadError}=await sb.storage.from('print-files').upload(path,file,{contentType:file.type,upsert:false});
+  if(uploadError)throw uploadError;
+  $('progressFill').style.width='75%';
+  const payload={user_id:user.id,file_path:path,file_name:safeName,mime_type:file.type,file_size_bytes:file.size,copies,paper_size:$('paper').value,color_mode:$('color').value,page_start:start,page_end:end,status:'queued'};
+  const {error:insertError}=await sb.from('print_jobs').insert(payload);
+  if(insertError){await sb.storage.from('print-files').remove([path]);throw insertError;}
+  $('progressFill').style.width='100%';message('printMsg','Request submitted. It will print only after an administrator approves it and the printer agent is online.','ok');
+  $('printForm').reset();$('copies').value='1';await loadJobs();
+ }catch(err){message('printMsg',err.message||'Could not submit request.','err');$('progressFill').style.width='0%';}
+ finally{$('submitJob').disabled=false;}
+};
+setup();
+</script>
+</body></html>
