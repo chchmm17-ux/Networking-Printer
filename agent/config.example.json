@@ -1,6 +1,6 @@
 {
-  "siteUrl": "https://YOUR-VERCEL-DOMAIN.vercel.app",
-  "agentToken": "PASTE_THE_SAME_AGENT_TOKEN_FROM_VERCEL_ENVIRONMENT_VARIABLES",
+  "siteUrl": "https://networking-project-c8ypkooah-trickster-cham.vercel.app",
+  "agentToken": "e4D4S3r+rYwjxHE6HW9B0mT0M/unqz1Fj5hbsLTuyAM=",
   "printerName": "Brother DCP-T720DW Printer (Copy 1)",
   "sumatraPath": "C:\\Users\\YOUR_WINDOWS_USER\\AppData\\Local\\SumatraPDF\\SumatraPDF.exe",
   "pollSeconds": 10
